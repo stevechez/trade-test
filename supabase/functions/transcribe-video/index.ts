@@ -1,89 +1,57 @@
-import { serve } from "std/http/server.ts"
-import { createClient } from "supabase"
+// 1. Fetch the full assessment data including the new questions array
+const { data: assessment } = await supabase
+  .from('assessments')
+  .select('questions, required_keywords')
+  .eq('id', record.assessment_id)
+  .single()
 
-serve(async (req) => {
-  try {
-    const { record } = await req.json()
+// ... (Transcription logic remains the same) ...
 
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
+const transcript = result.text; // The full text from the video
 
-    // 1. Get the assessment details to find the 'required_keywords'
-    const { data: assessment } = await supabase
-      .from('assessments')
-      .select('required_keywords')
-      .eq('id', record.assessment_id)
-      .single()
+// 2. Updated AI Grading Prompt
+const gradingPrompt = `
+  You are a Master Tradesman reviewing a 10-step video walkthrough for a ${assessment.title} task.
+  
+  QUESTIONS TO ANSWER:
+  ${assessment.questions.join('\n')}
 
-    // 2. Perform Transcription (Same as before)
-    const file = new File([videoData], "video.webm", { type: "video/webm" })
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('model', 'whisper-large-v3')
+  REQUIRED TECHNICAL KEYWORDS:
+  ${assessment.required_keywords.join(', ')}
 
-    const groqResponse = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${Deno.env.get('GROQ_API_KEY')}` },
-      body: formData
-    })
+  CANDIDATE TRANSCRIPT:
+  "${transcript}"
 
-    const result = await groqResponse.json()
-    const transcript = result.text.toLowerCase()
+  YOUR TASK:
+  1. Determine if the candidate addressed each of the ${assessment.questions.length} questions.
+  2. Check for the presence of the technical keywords in the correct context.
+  3. Identify if the candidate sounds like they are reading a script vs. observing real-world conditions.
+  4. Output a JSON status: {"status": "passed" | "needs_review", "score": 0-100, "summary": "brief verdict"}
+`;
 
-    // 3. Simple Keyword Matcher
-    // We check how many of your Pro Keywords appeared in their speech
-    const keywords = assessment.required_keywords || []
-    const matched = keywords.filter(k => transcript.includes(k.toLowerCase()))
-    
-    // 4. Update the DB with the transcript AND the match count
-    await supabase
-      .from('submissions')
-      .update({ 
-        transcript: transcript,
-        status: matched.length >= (keywords.length / 2) ? 'passed' : 'needs_review'
-      })
-      .eq('id', record.id)
-
-    // 1. Download the video
-    const { data: videoData, error: downloadError } = await supabase.storage
-      .from('assessments')
-      .download(record.video_url)
-
-    if (downloadError) throw downloadError
-
-    // 2. Prepare for Groq
-    // We convert the 'data' (Blob) into a 'File' so Groq accepts it
-    const file = new File([videoData], "video.webm", { type: "video/webm" })
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('model', 'whisper-large-v3')
-
-    // 3. Request to Groq
-    const groqResponse = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${Deno.env.get('GROQ_API_KEY')}` },
-      body: formData
-    })
-
-    const result = await groqResponse.json()
-    const transcript = result.text || "Transcription failed"
-
-    // 4. Update the DB
-    await supabase
-      .from('submissions')
-      .update({ transcript: transcript })
-      .eq('id', record.id)
-
-    return new Response(JSON.stringify({ success: true }), { 
-      headers: { "Content-Type": "application/json" } 
-    })
-
-  } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), { 
-      status: 500,
-      headers: { "Content-Type": "application/json" } 
-    })
-  }
+// 3. Send to Groq for analysis
+const chatCompletion = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+  method: 'POST',
+  headers: { 
+    'Authorization': `Bearer ${Deno.env.get('GROQ_API_KEY')}`,
+    'Content-Type': 'application/json' 
+  },
+  body: JSON.stringify({
+    model: "llama-3.1-70b-versatile",
+    messages: [{ role: "user", content: gradingPrompt }],
+    response_format: { type: "json_object" }
+  })
 })
+
+const analysis = await chatCompletion.json();
+const verdict = JSON.parse(analysis.choices[0].message.content);
+
+// 4. Update the Submission record
+await supabase
+  .from('submissions')
+  .update({ 
+    transcript: transcript,
+    ai_summary: verdict.summary,
+    status: verdict.status 
+  })
+  .eq('id', record.id)
