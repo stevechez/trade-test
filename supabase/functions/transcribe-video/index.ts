@@ -1,57 +1,103 @@
-// 1. Fetch the full assessment data including the new questions array
-const { data: assessment } = await supabase
-  .from('assessments')
-  .select('questions, required_keywords')
-  .eq('id', record.assessment_id)
-  .single()
+import "jsr:@supabase/functions-js/edge-runtime.d.ts"
+// @ts-ignore: Deno standard modules are handled by Supabase Edge Runtime
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.40.0"
 
-// ... (Transcription logic remains the same) ...
+Deno.serve(async (req) => {
+  try {
+    // 1. Initialize Supabase inside the handler
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    )
 
-const transcript = result.text; // The full text from the video
+    // 2. Parse the incoming webhook record
+    const { record } = await req.json()
 
-// 2. Updated AI Grading Prompt
-const gradingPrompt = `
-  You are a Master Tradesman reviewing a 10-step video walkthrough for a ${assessment.title} task.
-  
-  QUESTIONS TO ANSWER:
-  ${assessment.questions.join('\n')}
+    // 3. Fetch Assessment details (Questions + Keywords)
+    const { data: assessment, error: assessError } = await supabase
+      .from('assessments')
+      .select('title, questions, required_keywords')
+      .eq('id', record.assessment_id)
+      .single()
 
-  REQUIRED TECHNICAL KEYWORDS:
-  ${assessment.required_keywords.join(', ')}
+    if (assessError || !assessment) throw new Error("Assessment not found")
 
-  CANDIDATE TRANSCRIPT:
-  "${transcript}"
+    // 4. Download the video from Storage to send to Groq
+    const { data: videoData, error: downloadError } = await supabase.storage
+      .from('assessments')
+      .download(record.video_url)
 
-  YOUR TASK:
-  1. Determine if the candidate addressed each of the ${assessment.questions.length} questions.
-  2. Check for the presence of the technical keywords in the correct context.
-  3. Identify if the candidate sounds like they are reading a script vs. observing real-world conditions.
-  4. Output a JSON status: {"status": "passed" | "needs_review", "score": 0-100, "summary": "brief verdict"}
-`;
+    if (downloadError || !videoData) throw new Error("Video download failed")
 
-// 3. Send to Groq for analysis
-const chatCompletion = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-  method: 'POST',
-  headers: { 
-    'Authorization': `Bearer ${Deno.env.get('GROQ_API_KEY')}`,
-    'Content-Type': 'application/json' 
-  },
-  body: JSON.stringify({
-    model: "llama-3.1-70b-versatile",
-    messages: [{ role: "user", content: gradingPrompt }],
-    response_format: { type: "json_object" }
-  })
+    // 5. Transcribe with Groq Whisper
+    const formData = new FormData()
+    formData.append('file', new File([videoData], "video.webm", { type: "video/webm" }))
+    formData.append('model', 'whisper-large-v3')
+
+    const groqTranscribe = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${Deno.env.get('GROQ_API_KEY')}` },
+      body: formData
+    })
+
+    const transcriptionResult = await groqTranscribe.json()
+    const transcript = transcriptionResult.text
+
+    // 6. AI Analysis Prompt
+    const gradingPrompt = `
+      You are a Master Tradesman reviewing a video walkthrough for: ${assessment.title}.
+      
+      QUESTIONS CANDIDATE WAS ASKED:
+      ${(assessment.questions || []).join('\n')}
+
+      REQUIRED KEYWORDS:
+      ${(assessment.required_keywords || []).join(', ')}
+
+      CANDIDATE TRANSCRIPT:
+      "${transcript}"
+
+      TASK:
+      1. Did they answer all questions?
+      2. Did they use keywords correctly?
+      3. Do they sound like they are observing reality or reading a script?
+      Output JSON: {"status": "passed" | "needs_review", "summary": "brief verdict"}
+    `
+
+    // 7. Get AI Verdict from Groq Llama
+    const chatCompletion = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 
+        'Authorization': `Bearer ${Deno.env.get('GROQ_API_KEY')}`,
+        'Content-Type': 'application/json' 
+      },
+      body: JSON.stringify({
+        model: "llama-3.1-70b-versatile",
+        messages: [{ role: "user", content: gradingPrompt }],
+        response_format: { type: "json_object" }
+      })
+    })
+
+    const analysis = await chatCompletion.json()
+    const verdict = JSON.parse(analysis.choices[0].message.content)
+
+    // 8. Update the Submission in DB
+    await supabase
+      .from('submissions')
+      .update({ 
+        transcript: transcript,
+        ai_summary: verdict.summary,
+        status: verdict.status 
+      })
+      .eq('id', record.id)
+
+    return new Response(JSON.stringify({ message: "Analysis Complete" }), {
+      headers: { "Content-Type": "application/json" },
+    })
+
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    })
+  }
 })
-
-const analysis = await chatCompletion.json();
-const verdict = JSON.parse(analysis.choices[0].message.content);
-
-// 4. Update the Submission record
-await supabase
-  .from('submissions')
-  .update({ 
-    transcript: transcript,
-    ai_summary: verdict.summary,
-    status: verdict.status 
-  })
-  .eq('id', record.id)
