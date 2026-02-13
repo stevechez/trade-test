@@ -1,103 +1,96 @@
-import "jsr:@supabase/functions-js/edge-runtime.d.ts"
-// @ts-ignore: Deno standard modules are handled by Supabase Edge Runtime
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.40.0"
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import Mux from 'https://esm.sh/@mux/mux-node'
 
-Deno.serve(async (req) => {
+serve(async (req) => {
+  const supabase = createClient(
+    Deno.env.get('SUPABASE_URL') ?? '',
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+  )
+
+  const mux = new Mux({
+    tokenId: Deno.env.get('MUX_TOKEN_ID'),
+    tokenSecret: Deno.env.get('MUX_TOKEN_SECRET'),
+  });
+
   try {
-    // 1. Initialize Supabase inside the handler
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
-
-    // 2. Parse the incoming webhook record
     const { record } = await req.json()
+    console.log(`Processing submission: ${record.id}`)
 
-    // 3. Fetch Assessment details (Questions + Keywords)
-    const { data: assessment, error: assessError } = await supabase
+    // 1. Get a Signed URL for Mux (Mux needs a way to download the file)
+    const { data: signedUrlData, error: urlError } = await supabase.storage
       .from('assessments')
-      .select('title, questions, required_keywords')
-      .eq('id', record.assessment_id)
-      .single()
+      .createSignedUrl(record.video_url, 3600)
 
-    if (assessError || !assessment) throw new Error("Assessment not found")
+    if (urlError || !signedUrlData) throw new Error("Could not create signed URL for Mux")
 
-    // 4. Download the video from Storage to send to Groq
-    const { data: videoData, error: downloadError } = await supabase.storage
-      .from('assessments')
-      .download(record.video_url)
+    // 2. Tell Mux to create an asset
+    console.log("Creating Mux Asset...")
+    const asset = await mux.video.assets.create({
+      input: [{ url: signedUrlData.signedUrl }],
+      playback_policy: ['public'],
+    });
 
-    if (downloadError || !videoData) throw new Error("Video download failed")
+    const playbackId = asset.playback_ids?.[0].id
+    console.log(`Mux Asset Created. Playback ID: ${playbackId}`)
 
-    // 5. Transcribe with Groq Whisper
-    const formData = new FormData()
-    formData.append('file', new File([videoData], "video.webm", { type: "video/webm" }))
-    formData.append('model', 'whisper-large-v3')
-
-    const groqTranscribe = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${Deno.env.get('GROQ_API_KEY')}` },
-      body: formData
-    })
-
-    const transcriptionResult = await groqTranscribe.json()
-    const transcript = transcriptionResult.text
-
-    // 6. AI Analysis Prompt
-    const gradingPrompt = `
-      You are a Master Tradesman reviewing a video walkthrough for: ${assessment.title}.
-      
-      QUESTIONS CANDIDATE WAS ASKED:
-      ${(assessment.questions || []).join('\n')}
-
-      REQUIRED KEYWORDS:
-      ${(assessment.required_keywords || []).join(', ')}
-
-      CANDIDATE TRANSCRIPT:
-      "${transcript}"
-
-      TASK:
-      1. Did they answer all questions?
-      2. Did they use keywords correctly?
-      3. Do they sound like they are observing reality or reading a script?
-      Output JSON: {"status": "passed" | "needs_review", "summary": "brief verdict"}
-    `
-
-    // 7. Get AI Verdict from Groq Llama
-    const chatCompletion = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: { 
-        'Authorization': `Bearer ${Deno.env.get('GROQ_API_KEY')}`,
-        'Content-Type': 'application/json' 
-      },
-      body: JSON.stringify({
-        model: "llama-3.1-70b-versatile",
-        messages: [{ role: "user", content: gradingPrompt }],
-        response_format: { type: "json_object" }
-      })
-    })
-
-    const analysis = await chatCompletion.json()
-    const verdict = JSON.parse(analysis.choices[0].message.content)
-
-    // 8. Update the Submission in DB
-    await supabase
+    // 3. Update the Database (Crucial Step)
+    const { error: dbUpdateError } = await supabase
       .from('submissions')
       .update({ 
-        transcript: transcript,
-        ai_summary: verdict.summary,
-        status: verdict.status 
+        mux_playback_id: playbackId,
+        status: 'processing' // Keep it in processing until AI finishes
       })
       .eq('id', record.id)
 
-    return new Response(JSON.stringify({ message: "Analysis Complete" }), {
-      headers: { "Content-Type": "application/json" },
-    })
+    if (dbUpdateError) throw new Error(`DB Update Failed: ${dbUpdateError.message}`)
+
+    // ... (Proceed to Groq Transcription and AI Analysis) ...
+    // Make sure your final update also preserves the mux_playback_id!
+    
+    return new Response(JSON.stringify({ success: true, playbackId }), { status: 200 })
+
+// 1. After you get your 'transcript' from OpenAI/Deepgram:
+const transcript = transcriptionResponse.text;
+
+// 2. Immediately call the AI again for the Summary
+const summaryResponse = await openai.chat.completions.create({
+  model: "gpt-4o-mini", // Use a fast model for speed
+  messages: [
+    { role: "system", content: "You are an expert trade project manager. Summarize the following site walkthrough transcript into a concise professional verdict." },
+    { role: "user", content: transcript }
+  ]
+});
+
+const aiSummary = summaryResponse.choices[0].message.content;
+
+// 3. Update Supabase with BOTH pieces of data
+const { error } = await supabase
+  .from('submissions')
+  .update({ 
+    transcript: transcript,
+    ai_summary: aiSummary,
+    status: 'completed'
+  })
+  .eq('id', submissionId);
 
   } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    })
+    console.error("EDGE FUNCTION ERROR:", err.message)
+    return new Response(JSON.stringify({ error: err.message }), { status: 500 })
   }
+
+  // After the ai_summary is saved to Supabase...
+const emailResponse = await fetch('https://api.resend.com/emails', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${DENO_ENV.RESEND_API_KEY}`,
+  },
+  body: JSON.stringify({
+    from: 'AI Project Manager <system@yourdomain.com>',
+    to: [submission.candidate_email],
+    subject: `Verdict: ${assessment.title}`,
+    html: `<strong>The AI has reviewed the walkthrough:</strong><p>${aiSummary}</p>`
+  }),
+});
 })
