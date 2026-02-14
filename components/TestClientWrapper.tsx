@@ -13,7 +13,6 @@ export default function TestClientWrapper({ assessment }: { assessment: any }) {
   const router = useRouter()
   const [email, setEmail] = useState('')
   const [currentStep, setCurrentStep] = useState(0)
-  
   const supabase = createClient()
 
   if (!assessment) return null;
@@ -26,74 +25,67 @@ export default function TestClientWrapper({ assessment }: { assessment: any }) {
   const processVideo = async (submissionId: string) => {
     console.log("Waking up AI for submission:", submissionId)
     try {
+      // Stringifying the body ensures valid JSON input for the function
       const { data, error } = await supabase.functions.invoke('transcribe-video', {
-        body: { submissionId }
+        body: JSON.stringify({ submissionId })
       })
-      if (error) {
-        console.error("Supabase Function Error:", error)
-        return false
-      }
+      if (error) throw error
       return true
     } catch (err) {
-      console.error("Network Error triggering AI:", err)
+      console.error("Supabase Function Error:", err)
       return false
     }
   }
+// Inside TestClientWrapper...
 
-  // 2. The Main Upload Engine
-  const handleUpload = async (blob: Blob) => {
-    // Validation
-    if (!email || !email.includes('@')) {
-      toast.error("Please enter a valid email address.");
-      return;
-    }
-
-    const toastId = toast.loading("Saving your walkthrough...")
-    const fileName = `${assessment.id}/${crypto.randomUUID()}.webm`
-
-    try {
-      // Step A: Upload to Storage
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('assessments')
-        .upload(fileName, blob, { contentType: 'video/webm' })
-
-      if (uploadError || !uploadData) {
-        throw new Error(uploadError?.message || "Upload failed");
-      }
-
-      // Step B: Insert and GET BACK the new row ID
-      const { data: newSubmission, error: dbError } = await supabase
-        .from('submissions')
-        .insert({
-          assessment_id: assessment.id,
-          video_url: uploadData.path,
-          candidate_email: email,
-          status: 'processing'
-        })
-        .select()
-        .single();
-
-      if (dbError || !newSubmission) {
-        throw new Error(dbError?.message || "Database insert failed");
-      }
-
-      // Step C: Trigger the AI
-      toast.loading("Video saved! AI is now analyzing...", { id: toastId });
-      const aiStarted = await processVideo(newSubmission.id);
-
-      if (aiStarted) {
-        toast.success("Submitted successfully!", { id: toastId });
-      } else {
-        toast.info("Saved, but AI analysis is queued.", { id: toastId });
-      }
-      
-      router.push('/test/success');
-
-    } catch (err: any) {
-      console.error("Critical Failure:", err);
-      toast.error(`Error: ${err.message}`, { id: toastId });
-    }
+const handleUpload = async (blob: Blob) => {
+  if (!email || !email.includes('@')) {
+    toast.error("Please enter a valid email address.");
+    return;
   }
+
+  const toastId = toast.loading("Saving your walkthrough...")
+  const fileName = `${assessment.id}/${crypto.randomUUID()}.webm`
+
+  try {
+    // 1. Upload to Storage FIRST
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('assessments')
+      .upload(fileName, blob, { contentType: 'video/webm' })
+
+    if (uploadError) throw new Error("Storage failure: " + uploadError.message);
+
+    // 2. Insert and AWAIT the confirmation
+    const { data: newSubmission, error: dbError } = await supabase
+      .from('submissions')
+      .insert({
+        assessment_id: assessment.id,
+        video_url: uploadData.path,
+        candidate_email: email,
+        status: 'processing'
+      })
+      .select()
+      .single();
+
+    if (dbError || !newSubmission) throw new Error("Database sync failed.");
+
+    // 3. Trigger AI with a guaranteed valid JSON body
+    toast.loading("AI is now analyzing your video...", { id: toastId });
+    
+    const { data: aiResponse, error: aiError } = await supabase.functions.invoke('transcribe-video', {
+      body: { submissionId: newSubmission.id } // The SDK handles the JSON.stringify for you
+    });
+
+    if (aiError) throw aiError;
+
+    toast.success("Analysis complete!", { id: toastId });
+    router.push('/test/success');
+
+  } catch (err: any) {
+    console.error("Critical Failure:", err);
+    toast.error(`Error: ${err.message}`, { id: toastId });
+  }
+}
 
   return (
     <div className="space-y-6">

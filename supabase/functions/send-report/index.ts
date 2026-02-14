@@ -16,6 +16,16 @@ serve(async (req) => {
     .eq('id', submissionId)
     .single()
 
+    const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
+// Inside your Deno.serve...
+if (req.method === 'OPTIONS') {
+  return new Response('ok', { headers: corsHeaders })
+}
+
   // Use Resend or a similar API to send the email
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -24,7 +34,7 @@ serve(async (req) => {
       'Authorization': `Bearer ${Deno.env.get('RESEND_API_KEY')}`
     },
     body: JSON.stringify({
-      from: 'TradeTest AI <reports@yourdomain.com>',
+      from: 'TradeTest AI <reports@siteverdict.only>',
       to: [userEmail],
       subject: `Vetting Report: ${submission.assessments.title}`,
       html: `<strong>Verdict: ${submission.status}</strong><p>${submission.ai_summary}</p>`
