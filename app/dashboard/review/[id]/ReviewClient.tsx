@@ -1,28 +1,28 @@
 "use client"
 import { Printer, Mail, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { createClient } from "@/lib/supabase" // Ensure this matches your project structure
+import { createClient } from "@/lib/supabase" // Points to your createBrowserClient file
 import { useState } from "react" 
 
 export default function ReviewClient({ submission }: { submission: any }) {
   const [isSending, setIsSending] = useState(false);
   
-  // Initialize the Supabase client
+  // Initialize the Supabase client inside the component
   const supabase = createClient();
 
   const handleSendEmail = async () => {
-    // Debug: Find which field contains the email
-    console.log("Full Submission Object:", submission);
-
+    // 1. Find the email address (checking multiple possible keys)
     const targetEmail = submission.candidate_email || submission.email || submission.user_email;
 
     if (!targetEmail) {
-      alert("Error: No email address found for this submission. Check console.");
+      alert("Error: No email address found for this submission.");
+      console.log("Debug: Available submission fields:", Object.keys(submission));
       return;
     }
 
     setIsSending(true);
     try {
+      // 2. Invoke the Edge Function
       const { data, error } = await supabase.functions.invoke('send-report', {
         body: { 
           submissionId: submission.id, 
@@ -34,7 +34,7 @@ export default function ReviewClient({ submission }: { submission: any }) {
       alert("Success! Audit sent to the contractor.");
     } catch (error) {
       console.error("Send Email Error:", error);
-      alert("Failed to send email. Check the browser console.");
+      alert("Failed to send email. Check browser console for the error message.");
     } finally {
       setIsSending(false);
     }
@@ -75,17 +75,18 @@ export default function ReviewClient({ submission }: { submission: any }) {
       {/* Audit Content */}
       <div className="print:block border rounded-lg p-8 bg-white shadow-sm">
         <header className="mb-8 border-b pb-4">
-          <h1 className="text-2xl font-bold text-slate-900">SiteVerdict.online Technical Audit</h1>
-          <p className="text-slate-500">Property: {submission.assessments?.title || "Residential Site"}</p>
+          <h1 className="text-2xl font-bold text-slate-900 font-mono">SITEVERDICT AUDIT</h1>
+          <p className="text-slate-500">Property: {submission.assessments?.title || "Pending Assessment"}</p>
         </header>
         
         <div className="space-y-4">
-          <h2 className="text-lg font-semibold">AI Verdict Summary</h2>
-          <p className="text-slate-700">{submission.ai_summary || "No summary found."}</p>
+          <h2 className="text-lg font-semibold uppercase tracking-wider text-blue-600">AI Analysis Summary</h2>
+          <div className="bg-slate-50 p-6 rounded-md border border-slate-100 italic text-slate-700 leading-relaxed">
+            "{submission.ai_summary || "Audit results are being calculated..."}"
+          </div>
         </div>
       </div>
 
-      {/* Global CSS for Clean Printing */}
       <style jsx global>{`
         @media print {
           .no-print { display: none !important; }
