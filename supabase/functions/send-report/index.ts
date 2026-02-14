@@ -7,7 +7,7 @@ const corsHeaders = {
 }
 
 serve(async (req) => {
-  // 1. Handle CORS Preflight immediately
+  // Handle CORS Preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
@@ -20,18 +20,14 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
-    // 2. Fetch the data
     const { data: submission, error: fetchError } = await supabase
       .from('submissions')
       .select('*, assessments(title)')
       .eq('id', submissionId)
       .single()
 
-    if (fetchError || !submission) {
-      throw new Error('Submission not found')
-    }
+    if (fetchError || !submission) throw new Error('Submission not found')
 
-    // 3. Send via Resend
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
@@ -39,7 +35,7 @@ serve(async (req) => {
         'Authorization': `Bearer ${Deno.env.get('RESEND_API_KEY')}`
       },
       body: JSON.stringify({
-        from: 'TradeTest AI <reports@siteverdict.online>', // Ensure this domain is verified in Resend
+        from: 'TradeTest AI <reports@siteverdict.online>',
         to: [userEmail],
         subject: `Vetting Report: ${submission.assessments?.title || 'Site Audit'}`,
         html: `<strong>Verdict: ${submission.status}</strong><p>${submission.ai_summary}</p>`
@@ -48,7 +44,6 @@ serve(async (req) => {
 
     const resData = await res.json()
 
-    // 4. Return success with CORS headers
     return new Response(JSON.stringify(resData), { 
       status: 200, 
       headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
