@@ -57,7 +57,7 @@ serve(async (req) => {
               </div>
 
               <div style="text-align: center; margin-top: 30px;">
-                <a href="https://trade-test-hi8suogi0-steves-projects-c31e806e.vercel.app/dashboard/review/${submission.id}" 
+                <a href="/Projects/trade-test/app/dashboard/review/[id]" 
                    style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
                   View Full Technical Report
                 </a>
