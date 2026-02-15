@@ -53,7 +53,8 @@ export default function DashboardClient({ initialSubmissions }: { initialSubmiss
                   </Badge>
                 </td>
                 <td className="px-6 py-5 text-right">
-                  <Link href={`/dashboard/review/${sub.id}`}
+                  <Link 
+  href={`/dashboard/review/${sub.id}`}
                     className="inline-flex items-center gap-2 text-sm font-bold text-blue-600 hover:text-blue-800 transition-all group-hover:translate-x-1"
                   >
                     View Verdict <ArrowRight className="h-4 w-4" />

@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+const FROM_EMAIL = 'SiteVerdict <verdicts@siteverdict.online>';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -39,8 +40,8 @@ serve(async (req) => {
         'Authorization': `Bearer ${Deno.env.get('RESEND_API_KEY')}`
       },
       body: JSON.stringify({
-        from: 'SiteVerdict <verdicts@siteverdict.online>',
-        to: [userEmail],
+  from: FROM_EMAIL,
+  to: [userEmail],
         subject: `Site Audit Verdict: ${submission.assessments?.title || 'Residential Project'}`,
         html: `
           <div style="font-family: sans-serif; max-width: 600px; margin: auto; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
