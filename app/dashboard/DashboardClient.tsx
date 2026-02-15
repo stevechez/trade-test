@@ -64,7 +64,29 @@ export default function DashboardClient({ initialSubmissions }: { initialSubmiss
             ))}
           </tbody>
         </table>
+
+        
       </div>
+      {/* ... existing dashboard content ... */}
+
+<footer className="mt-20 border-t border-slate-100 py-10 no-print">
+  <div className="flex flex-col md:flex-row justify-between items-center gap-6 text-sm text-slate-500">
+    <div className="flex items-center gap-2">
+      <div className="h-2 w-2 bg-green-500 rounded-full animate-pulse" />
+      <span>Systems Operational - Beta v1.0</span>
+    </div>
+    
+    <div className="flex gap-8 font-medium">
+      <Link href="/terms" className="hover:text-blue-600 transition-colors">
+        Privacy & Terms
+      </Link>
+      <Link href="mailto:support@siteverdict.online" className="hover:text-blue-600 transition-colors">
+        Support
+      </Link>
+      <span className="text-slate-300">© 2026 SiteVerdict</span>
+    </div>
+  </div>
+</footer>
     </div>
   )
 }

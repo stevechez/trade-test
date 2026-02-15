@@ -4,9 +4,26 @@ import { Printer, Mail, Loader2, Bug } from "lucide-react" // Added Bug icon for
 import { Button } from "@/components/ui/button"
 import { createClient } from "@/lib/supabase" 
 import { useState } from "react" 
+import { toast } from "sonner"
 
-export default function ReviewClient({ submission }: { submission: any }) {
-  const [isSending, setIsSending] = useState(false);
+// 1. Define what a 'submission' looks like
+interface ReviewClientProps {
+  submission: {
+    id: string;
+    title: string;
+    candidate_email: string;
+    video_url?: string;
+    status: string;
+    email?: string; // Fallback email field
+    user_email?: string; // Another fallback email field
+    assessments?: {
+      title: string;
+    };
+  };
+}
+
+// 2. Tell the component to use these props
+export default function ReviewClient({ submission }: ReviewClientProps) {  const [isSending, setIsSending] = useState(false);
   const supabase = createClient();
 
   const handleSendEmail = async () => {
@@ -31,7 +48,6 @@ export default function ReviewClient({ submission }: { submission: any }) {
 
     setIsSending(true);
     try {
-      // 3. INVOKE THE EDGE FUNCTION
       const { data, error } = await supabase.functions.invoke('send-report', {
         body: { 
           submissionId: submission.id, 
@@ -41,10 +57,18 @@ export default function ReviewClient({ submission }: { submission: any }) {
 
       if (error) throw error;
       
-      alert(`Success! Resend accepted the request for: ${targetEmail}`);
+      // 2. Trigger the Success Toast
+      toast.success("Verdict Sent!", {
+        description: `Email delivered to ${targetEmail}`,
+        duration: 5000,
+      });
+
     } catch (error: any) {
       console.error("Function Error:", error);
-      alert(`System Error: ${error.message || "Check Supabase Function Logs"}`);
+      // 3. Trigger Error Toast
+      toast.error("Send Failed", {
+        description: error.message || "Check Supabase Function Logs",
+      });
     } finally {
       setIsSending(false);
     }

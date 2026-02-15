@@ -20,12 +20,16 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
-    const { data: submission, error: fetchError } = await supabase
-      .from('submissions')
-      .select('*, assessments(title)')
-      .eq('id', submissionId)
-      .single()
+    // Inside your Edge Function, after the successful Resend response:
+const { error: updateError } = await supabase
+  .from('submissions')
+  .update({ 
+    status: 'completed',
+    // Optionally: sent_at: new Date().toISOString() 
+  })
+  .eq('id', submissionId);
 
+if (updateError) console.error("Database Update Error:", updateError);
     if (fetchError || !submission) {
       console.error("Supabase Fetch Error:", fetchError)
       throw new Error('Submission not found')

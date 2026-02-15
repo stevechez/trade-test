@@ -124,3 +124,16 @@
     @apply bg-background text-foreground;
   }
 }
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  body {
+    background: white !important;
+    font-size: 12pt;
+  }
+}
