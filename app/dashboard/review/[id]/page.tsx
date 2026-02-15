@@ -6,7 +6,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   const { id } = await params;
   const supabase = await createClient();
 
-  // 1. Fetch the data on the server
+  // 1. Fetch data with an OPTIONAL join to profiles
   const { data: submission, error } = await supabase
     .from('submissions')
     .select(`
@@ -17,17 +17,15 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
       profiles (
         is_premium
       )
-    `) 
+    `) // Removed the strict !submissions_candidate_email_fkey join
     .eq('id', id)
     .single();
 
-  // 2. Handle missing records or database errors
+  // 2. Debugging: If this triggers a 404, check your terminal/Vercel logs
   if (error || !submission) {
-    console.error("Database Error:", error?.message || "Submission not found in DB");
+    if (error) console.error("Supabase Query Error:", error.message);
     return notFound();
   }
 
-  // 3. Pass the data to the Client Component
-  // The alerts and debug logic must live inside ReviewClient.tsx, not here!
   return <ReviewClient submission={submission} />;
 }
