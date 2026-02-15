@@ -1,5 +1,4 @@
-// app/review/[id]/page.tsx
-import { createClient } from '@/lib/supabase' // Ensure this path is correct for your project
+import { createClient } from '@/lib/supabase' 
 import ReviewClient from './ReviewClient'
 import { notFound } from 'next/navigation'
 
@@ -7,28 +6,28 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   const { id } = await params;
   const supabase = await createClient();
 
- // app/review/[id]/page.tsx
+  // 1. Fetch the data on the server
+  const { data: submission, error } = await supabase
+    .from('submissions')
+    .select(`
+      *,
+      assessments (
+        title
+      ),
+      profiles (
+        is_premium
+      )
+    `) 
+    .eq('id', id)
+    .single();
 
-// 1. Destructure BOTH data and error from the query
-const { data: submission, error } = await supabase
-  .from('submissions')
-  .select(`
-    *,
-    assessments (
-      title
-    ),
-    profiles!submissions_candidate_email_fkey (
-      is_premium
-    )
-  `) // Added explicit join for the profiles table
-  .eq('id', id)
-  .single();
+  // 2. Handle missing records or database errors
+  if (error || !submission) {
+    console.error("Database Error:", error?.message || "Submission not found in DB");
+    return notFound();
+  }
 
-// 2. Now 'error' is defined and can be checked
-if (error || !submission) {
-  console.error("Database Error:", error); // Debugging help
-  return notFound();
-}
-
+  // 3. Pass the data to the Client Component
+  // The alerts and debug logic must live inside ReviewClient.tsx, not here!
   return <ReviewClient submission={submission} />;
 }
