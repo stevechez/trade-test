@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
-import VerdictReport from '@/components/VerdictReport'
-import { Loader2 } from 'lucide-react'
+import { Loader2, ShieldCheck } from 'lucide-react'
+// If your VerdictReport component is in a different folder, adjust this path
+import VerdictReport from '@/components/VerdictReport' 
 
 export default function ContractorSharePage({ params }: { params: { id: string } }) {
   const [reportData, setReportData] = useState<any>(null)
@@ -28,7 +29,7 @@ export default function ContractorSharePage({ params }: { params: { id: string }
     fetchReport()
   }, [params.id])
 
-  // Decode identity for the personal touch
+  // Decode the contractor's name from the link for that "pro" feel
   let contractorName = "Partner"
   if (encodedEmail) {
     try {
@@ -42,23 +43,29 @@ export default function ContractorSharePage({ params }: { params: { id: string }
     </div>
   )
 
-  if (!reportData) return <div className="p-20 text-center">Audit report not found.</div>
+  if (!reportData) return (
+    <div className="flex flex-col items-center justify-center h-screen space-y-4">
+      <ShieldCheck className="w-12 h-12 text-slate-300" />
+      <p className="text-slate-500 font-medium">Audit report not found or link expired.</p>
+    </div>
+  )
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <div className="bg-blue-600 py-4 px-6 text-white text-center shadow-lg">
-        <p className="text-sm font-bold uppercase tracking-widest animate-pulse">
+      {/* Personalized Alpha Banner */}
+      <div className="bg-blue-600 py-3 px-6 text-white text-center shadow-md">
+        <p className="text-xs font-bold uppercase tracking-widest">
           Welcome, {contractorName} • SiteVerdict Alpha Portal
         </p>
       </div>
 
-      <div className="py-8">
-        {/* FIX: We pass 'data' instead of 'auditId' */}
+      <main className="py-8">
+        {/* Pass isPublicView=true to enable the toggles for the contractor */}
         <VerdictReport data={reportData} isPublicView={true} />
-      </div>
+      </main>
       
-      <footer className="py-10 text-center text-slate-400 text-[10px] font-bold uppercase tracking-widest">
-        Dunn Strategic Consulting • Authorized Access Only
+      <footer className="py-12 text-center text-slate-400 text-[9px] font-bold uppercase tracking-widest border-t border-slate-100 mt-10">
+        Dunn Strategic Consulting LLC • Santa Cruz County, CA
       </footer>
     </div>
   )
