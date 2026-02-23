@@ -2,6 +2,18 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')
 
+// Add this variable at the top
+const SLACK_WEBHOOK_URL = Deno.env.get('SLACK_WEBHOOK_URL')
+
+// Inside your serve() function, after the Resend email logic:
+await fetch(SLACK_WEBHOOK_URL!, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    text: `🚀 *New Beta Feedback Received!*\n*User:* ${record.user_email}\n*Rating:* ${'⭐'.repeat(record.rating)}\n*Note:* ${record.useful_part}`
+  }),
+})
+
 serve(async (req) => {
   const { record } = await req.json()
 

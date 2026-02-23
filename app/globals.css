@@ -137,3 +137,14 @@
     font-size: 12pt;
   }
 }
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}
+
+/* Custom class for our PDF generator */
+.pdf-hidden {
+  display: none !important;
+}
