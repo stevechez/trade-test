@@ -25,7 +25,9 @@ export default function LoginPage() {
   async function handleLogin(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
-    if (!email || !email.includes("@")) {
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!cleanEmail || !cleanEmail.includes("@")) {
       toast.error("Enter a valid email address.");
       return;
     }
@@ -33,16 +35,8 @@ export default function LoginPage() {
     setIsSending(true);
 
     try {
-      const redirectTo =
-        typeof window !== "undefined"
-          ? `${window.location.origin}/auth/callback`
-          : undefined;
-
       const { error } = await supabase.auth.signInWithOtp({
-        email: email.trim().toLowerCase(),
-        options: {
-          emailRedirectTo: redirectTo,
-        },
+        email: cleanEmail,
       });
 
       if (error) throw error;
@@ -52,6 +46,7 @@ export default function LoginPage() {
       });
     } catch (error: unknown) {
       console.error("Login error:", error);
+
       toast.error("Could not send magic link", {
         description:
           error instanceof Error ? error.message : "Please try again.",

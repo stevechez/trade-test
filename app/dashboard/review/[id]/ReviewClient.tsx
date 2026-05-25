@@ -9,10 +9,12 @@ import {
   Video,
   Brain,
   ScrollText,
+  ExternalLink,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 interface ReviewClientProps {
@@ -38,8 +40,38 @@ interface ReviewClientProps {
   };
 }
 
+function extractStoragePath(videoUrl: string | null | undefined) {
+  if (!videoUrl) return null;
+
+  if (!videoUrl.startsWith("http")) {
+    return videoUrl;
+  }
+
+  try {
+    const url = new URL(videoUrl);
+
+    const publicMarker = "/storage/v1/object/public/site-videos/";
+    const signedMarker = "/storage/v1/object/sign/site-videos/";
+
+    if (url.pathname.includes(publicMarker)) {
+      return decodeURIComponent(url.pathname.split(publicMarker)[1]);
+    }
+
+    if (url.pathname.includes(signedMarker)) {
+      return decodeURIComponent(url.pathname.split(signedMarker)[1]);
+    }
+
+    return null;
+  } catch {
+    return videoUrl;
+  }
+}
+
 export default function ReviewClient({ submission }: ReviewClientProps) {
   const [isSending, setIsSending] = useState(false);
+  const [signedVideoUrl, setSignedVideoUrl] = useState<string | null>(null);
+  const [videoError, setVideoError] = useState<string | null>(null);
+
   const supabase = createClient();
 
   const targetEmail =
@@ -54,6 +86,34 @@ export default function ReviewClient({ submission }: ReviewClientProps) {
   const aiSummary = submission.ai_summary || "No AI summary available yet.";
   const transcript = submission.transcript || "No transcript available.";
   const videoUrl = submission.video_url;
+
+  useEffect(() => {
+    async function signVideoUrl() {
+      setSignedVideoUrl(null);
+      setVideoError(null);
+
+      const storagePath = extractStoragePath(videoUrl);
+
+      if (!storagePath) {
+        setVideoError("No video path found for this submission.");
+        return;
+      }
+
+      const { data, error } = await supabase.storage
+        .from("site-videos")
+        .createSignedUrl(storagePath, 60 * 60);
+
+      if (error || !data?.signedUrl) {
+        console.error("Video signing error:", error);
+        setVideoError(error?.message || "Could not create signed video URL.");
+        return;
+      }
+
+      setSignedVideoUrl(data.signedUrl);
+    }
+
+    signVideoUrl();
+  }, [videoUrl, supabase]);
 
   const handleNotifyContractor = async () => {
     if (!targetEmail) {
@@ -112,7 +172,7 @@ export default function ReviewClient({ submission }: ReviewClientProps) {
   };
 
   return (
-    <div className="mx-auto max-w-7xl animate-in fade-in duration-500 p-4 md:p-8">
+    <div className="mx-auto max-w-7xl animate-in fade-in p-4 duration-500 md:p-8">
       <div className="no-print mb-8 flex flex-col items-start justify-between gap-4 md:flex-row md:items-center">
         <div>
           <h1 className="text-3xl font-black tracking-tight text-slate-900">
@@ -257,15 +317,55 @@ export default function ReviewClient({ submission }: ReviewClientProps) {
             </div>
           </div>
 
-          {videoUrl ? (
-            <video
-              controls
-              src={videoUrl}
-              className="w-full rounded-2xl border border-slate-200 bg-black"
-            />
+          {signedVideoUrl ? (
+            <div className="overflow-hidden rounded-3xl border border-slate-200 bg-black">
+              <video
+                key={signedVideoUrl}
+                controls
+                playsInline
+                preload="metadata"
+                className="aspect-video w-full bg-black"
+              >
+                <source src={signedVideoUrl} type="video/webm" />
+                <source src={signedVideoUrl} type="video/mp4" />
+                <source src={signedVideoUrl} type="video/quicktime" />
+                Your browser does not support this video format.
+              </video>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-slate-950 px-4 py-3">
+                <p className="text-xs font-semibold text-slate-400">
+                  If playback fails in this browser, open the original file
+                  directly.
+                </p>
+
+                <div className="flex gap-2">
+                  <a
+                    href={signedVideoUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex h-9 items-center justify-center rounded-xl bg-white px-3 text-xs font-black text-slate-950 transition hover:bg-blue-100"
+                  >
+                    <ExternalLink className="mr-2 h-3.5 w-3.5" />
+                    Open Video
+                  </a>
+
+                  <a
+                    href={signedVideoUrl}
+                    download
+                    className="inline-flex h-9 items-center justify-center rounded-xl border border-white/15 px-3 text-xs font-black text-white transition hover:bg-white/10"
+                  >
+                    <Download className="mr-2 h-3.5 w-3.5" />
+                    Download
+                  </a>
+                </div>
+              </div>
+            </div>
           ) : (
-            <div className="rounded-2xl border border-dashed border-slate-300 p-8 text-slate-500">
-              No video available for this submission.
+            <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+              <p className="text-sm font-bold text-slate-500">
+                {videoError ||
+                  "No playable video URL was found for this submission."}
+              </p>
             </div>
           )}
         </section>
