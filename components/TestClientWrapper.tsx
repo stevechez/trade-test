@@ -1,119 +1,173 @@
-"use client"
+"use client";
 
-import { useState } from 'react'
-import CandidateRecorder from '@/components/CandidateRecorder'
-import { createClient } from '@/lib/supabase'
-import { useRouter } from 'next/navigation'
-import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
-import { Input } from '@/components/ui/input'
-import { toast } from 'sonner'
+import { useState } from "react";
+import CandidateRecorder from "@/components/CandidateRecorder";
+import { createClient } from "@/lib/supabase";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { toast } from "sonner";
 
 export default function TestClientWrapper({ assessment }: { assessment: any }) {
-  const router = useRouter()
-  const [email, setEmail] = useState('')
-  const [currentStep, setCurrentStep] = useState(0)
-  const supabase = createClient()
+  const router = useRouter();
+  const supabase = createClient();
+
+  const [email, setEmail] = useState("");
+  const [candidateName, setCandidateName] = useState("");
+  const [currentStep, setCurrentStep] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!assessment) return null;
 
-  const questions = assessment.questions && assessment.questions.length > 0 
-    ? assessment.questions 
-    : [assessment.prompt_text]
+  const questions =
+    assessment.questions && assessment.questions.length > 0
+      ? assessment.questions
+      : [assessment.prompt_text];
 
-  // 1. Logic to wake up the AI Edge Function
-  const processVideo = async (submissionId: string) => {
-    console.log("Waking up AI for submission:", submissionId)
-    try {
-      // Stringifying the body ensures valid JSON input for the function
-      const { data, error } = await supabase.functions.invoke('transcribe-video', {
-        body: JSON.stringify({ submissionId })
-      })
-      if (error) throw error
-      return true
-    } catch (err) {
-      console.error("Supabase Function Error:", err)
-      return false
+  const handleUpload = async (blob: Blob) => {
+    if (isSubmitting) return;
+
+    if (!email || !email.includes("@")) {
+      toast.error("Please enter a valid email address.");
+      return;
     }
-  }
-// Inside TestClientWrapper...
 
-const handleUpload = async (blob: Blob) => {
-  if (!email || !email.includes('@')) {
-    toast.error("Please enter a valid email address.");
-    return;
-  }
+    setIsSubmitting(true);
 
-  const toastId = toast.loading("Saving your walkthrough...")
-  const fileName = `${assessment.id}/${crypto.randomUUID()}.webm`
+    const toastId = toast.loading("Uploading your walkthrough...");
 
-  try {
-    // 1. Upload to Storage FIRST
-    const { data: uploadData, error: uploadError } = await supabase.storage
-      .from('assessments')
-      .upload(fileName, blob, { contentType: 'video/webm' })
+    const filePath = `${assessment.id}/${crypto.randomUUID()}.webm`;
 
-    if (uploadError) throw new Error("Storage failure: " + uploadError.message);
+    try {
+      // 1. Upload video to the correct bucket.
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from("site-videos")
+        .upload(filePath, blob, {
+          contentType: "video/webm",
+          upsert: false,
+        });
 
-    // 2. Insert and AWAIT the confirmation
-    const { data: newSubmission, error: dbError } = await supabase
-      .from('submissions')
-      .insert({
-        assessment_id: assessment.id,
-        video_url: uploadData.path,
-        candidate_email: email,
-        status: 'processing'
-      })
-      .select()
-      .single();
+      if (uploadError) {
+        console.error("Video upload failed:", uploadError);
+        throw new Error(`Storage failure: ${uploadError.message}`);
+      }
 
-    if (dbError || !newSubmission) throw new Error("Database sync failed.");
+      if (!uploadData?.path) {
+        throw new Error("Video upload did not return a storage path.");
+      }
 
-    // 3. Trigger AI with a guaranteed valid JSON body
-    toast.loading("AI is now analyzing your video...", { id: toastId });
-    
-    const { data: aiResponse, error: aiError } = await supabase.functions.invoke('transcribe-video', {
-      body: { submissionId: newSubmission.id } // The SDK handles the JSON.stringify for you
-    });
+      toast.loading("Saving your submission...", { id: toastId });
 
-    if (aiError) throw aiError;
+      // 2. Insert submission only after upload succeeds.
+      const { data: newSubmission, error: dbError } = await supabase
+        .from("submissions")
+        .insert({
+          assessment_id: assessment.id,
+          candidate_name: candidateName.trim() || null,
+          candidate_email: email.trim().toLowerCase(),
+          video_url: uploadData.path,
+          status: "processing",
+        })
+        .select("id")
+        .single();
 
-    toast.success("Analysis complete!", { id: toastId });
-    router.push('/test/success');
+      if (dbError) {
+        console.error("Submission insert failed:", dbError);
+        throw new Error(`Database sync failed: ${dbError.message}`);
+      }
 
-  } catch (err: any) {
-    console.error("Critical Failure:", err);
-    toast.error(`Error: ${err.message}`, { id: toastId });
-  }
-}
+      if (!newSubmission?.id) {
+        throw new Error("Submission insert did not return an ID.");
+      }
+
+      // 3. Trigger transcription/AI processing.
+      toast.loading("AI is analyzing your video...", { id: toastId });
+
+      const { error: aiError } = await supabase.functions.invoke(
+        "transcribe-video",
+        {
+          body: {
+            submissionId: newSubmission.id,
+          },
+        },
+      );
+
+      if (aiError) {
+        console.error("AI function failed:", aiError);
+
+        await supabase
+          .from("submissions")
+          .update({
+            status: "submitted",
+            ai_summary:
+              "Video submitted successfully. AI processing is pending review.",
+          })
+          .eq("id", newSubmission.id);
+
+        toast.success("Submission sent!", {
+          description:
+            "Your video was uploaded. AI processing will be reviewed separately.",
+          id: toastId,
+        });
+
+        router.push("/test/success");
+        return;
+      }
+
+      toast.success("Submission sent!", {
+        description:
+          "Your video response has been uploaded and is being reviewed.",
+        id: toastId,
+      });
+
+      router.push("/test/success");
+
+      router.push("/test/success");
+
+      router.push("/test/success");
+    } catch (err: unknown) {
+      console.error("Critical Failure:", err);
+
+      toast.error("Submission failed", {
+        description:
+          err instanceof Error ? err.message : "Something went wrong.",
+        id: toastId,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
-      <div className="bg-blue-50 p-5 rounded-xl border border-blue-100 shadow-sm min-h-[120px] flex flex-col justify-center">
-        <div className="flex justify-between items-center mb-3">
-          <span className="text-[10px] font-bold text-blue-600 uppercase tracking-widest bg-blue-100 px-2 py-0.5 rounded">
+      <div className="min-h-[120px] rounded-xl border border-blue-100 bg-blue-50 p-5 shadow-sm flex flex-col justify-center">
+        <div className="mb-3 flex items-center justify-between">
+          <span className="rounded bg-blue-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-blue-600">
             Step {currentStep + 1} of {questions.length}
           </span>
         </div>
-        <p className="text-blue-900 font-semibold text-lg leading-tight">
+
+        <p className="text-lg font-semibold leading-tight text-blue-900">
           {questions[currentStep]}
         </p>
       </div>
 
       <div className="flex gap-3">
-        <Button 
-          variant="outline" 
+        <Button
+          variant="outline"
           className="flex-1"
-          disabled={currentStep === 0} 
-          onClick={() => setCurrentStep(prev => prev - 1)}
+          disabled={currentStep === 0}
+          onClick={() => setCurrentStep((prev) => prev - 1)}
         >
           Previous
         </Button>
-        <Button 
-          variant="outline" 
+
+        <Button
+          variant="outline"
           className="flex-1"
-          disabled={currentStep === questions.length - 1} 
-          onClick={() => setCurrentStep(prev => prev + 1)}
+          disabled={currentStep === questions.length - 1}
+          onClick={() => setCurrentStep((prev) => prev + 1)}
         >
           Next
         </Button>
@@ -122,22 +176,38 @@ const handleUpload = async (blob: Blob) => {
       <hr className="border-slate-100" />
 
       <div className="space-y-2">
-        <p className="text-[10px] text-center text-slate-400 font-bold uppercase">Record your walkthrough</p>
-        <CandidateRecorder onUpload={handleUpload} />
+        <Label htmlFor="candidate_name">Your Name</Label>
+        <Input
+          id="candidate_name"
+          type="text"
+          placeholder="Jane Contractor"
+          value={candidateName}
+          onChange={(e) => setCandidateName(e.target.value)}
+        />
       </div>
 
-      <div className="space-y-2 mb-6">
+      <div className="space-y-2">
         <Label htmlFor="candidate_email">Your Email Address</Label>
-        <Input 
+        <Input
           id="candidate_email"
-          type="email" 
-          placeholder="name@example.com" 
+          type="email"
+          placeholder="name@example.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
         />
-        <p className="text-[10px] text-slate-400 italic">We'll use this to contact you about the job.</p>
+        <p className="text-[10px] italic text-slate-400">
+          We'll use this to contact you about the job.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-center text-[10px] font-bold uppercase text-slate-400">
+          Record your walkthrough
+        </p>
+
+        <CandidateRecorder onUpload={handleUpload} />
       </div>
     </div>
-  )
+  );
 }

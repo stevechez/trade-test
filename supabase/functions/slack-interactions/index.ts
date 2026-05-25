@@ -24,8 +24,8 @@ serve(async (req) => {
   const finding = audit.technician_notes.findings[itemIndex]
 
   // 3. Call OpenAI for a targeted "Re-Inspection"
-try {
-  const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {    method: 'POST',
+  const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
     headers: {
       'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`,
       'Content-Type': 'application/json'
@@ -48,49 +48,6 @@ try {
       response_format: { type: "json_object" }
     })
   })
-
-  if (!aiResponse.ok) {
-    const errorData = await aiResponse.json()
-    throw new Error(`OpenAI API Error: ${errorData.error.message}`)
-  }
-} catch (error) {
-  // Alert Slack that the AI is down or the Key is invalid
-  await fetch(Deno.env.get('SLACK_WEBHOOK_URL')!, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      text: `🚨 *Critical: OpenAI Integration Failure*`,
-      attachments: [{
-        color: "#ff0000",
-        text: `Error: ${error.message}\nAction: Check API Key or Credits at platform.openai.com`
-      }]
-    })
-  })
-  return new Response("Error handled", { status: 500 })
-}
-
-  if (verdict.resolved) {
-  // Update the database to reflect the verified status
-  const updatedFindings = [...audit.technician_notes.findings]
-  updatedFindings[itemIndex].status = 'PASS' // Change FAIL to PASS
-
-  const { error: updateError } = await supabase
-    .from('verdicts')
-    .update({ 
-      status: 'VERIFIED',
-      technician_notes: {
-        ...audit.technician_notes,
-        findings: updatedFindings
-      },
-      metadata: {
-        ...audit.metadata,
-        ai_verified_at: new Date().toISOString()
-      }
-    })
-    .eq('id', auditId)
-
-  if (updateError) console.error("Database update failed:", updateError)
-}
 
   const result = await aiResponse.json()
   const verdict = JSON.parse(result.choices[0].message.content)
