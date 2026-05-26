@@ -3,16 +3,27 @@ import type { EmailOtpType } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
+function getSafeNext(next: string | null) {
+  if (!next) return "/dashboard";
+  if (!next.startsWith("/")) return "/dashboard";
+  if (next.startsWith("//")) return "/dashboard";
+
+  return next;
+}
+
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
 
-  const token_hash = requestUrl.searchParams.get("token_hash");
+  const tokenHash = requestUrl.searchParams.get("token_hash");
   const type = requestUrl.searchParams.get("type") as EmailOtpType | null;
-  const next = requestUrl.searchParams.get("next") || "/dashboard";
+  const next = getSafeNext(requestUrl.searchParams.get("next"));
 
-  if (!token_hash || !type) {
+  if (!tokenHash || !type) {
     return NextResponse.redirect(
-      new URL("/login?error=Invalid authentication link", requestUrl.origin),
+      new URL(
+        "/login?error=Invalid authentication link",
+        requestUrl.origin,
+      ),
     );
   }
 
@@ -36,7 +47,7 @@ export async function GET(request: Request) {
   );
 
   const { error } = await supabase.auth.verifyOtp({
-    token_hash,
+    token_hash: tokenHash,
     type,
   });
 
